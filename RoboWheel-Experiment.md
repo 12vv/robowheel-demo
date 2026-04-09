@@ -9,6 +9,22 @@
 ### Robotwheel Pipeline
 ```
 Robotwheel data generation
+├── HaMeR       # Reconstruct MANO representation for each frame
+├── Hunyuan3D   # Reconstruct object 3D mesh
+├── Droid-slam  # Estimate Camera Intrinsics to project reconstructed hand and object back to world coordinate
+├── TSDF        # avoid collision
+└── ManiTraps   # RL method to generate physically plausible trajectory
+```
+### Now our pipeline 
+```
+Robotwheel-demo 
+├── HaMeR          # Reconstruct MANO representation for each frame
+├── Hunyuan3D      # Reconstruct object 3D mesh
+├── FoundationPose # Track object orientation and position
+├── MuJuCo         # Physics Engine to avoid physical collision
+└── ManiTraps      # RL method to generate physically plausible trajectory
+```
+
 ├── HaMeR       					# Reconstruct MANO representation for each frame
 ├── Hunyuan3D   					# Reconstruct object 3D mesh
 ├── Droid-slam  					# Estimate Camera Intrinsics to project reconstructed hand and object back to world coordinate
