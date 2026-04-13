@@ -45,7 +45,10 @@ if __name__ == "__main__":
     # path to store rendered video to demonstrate the reconstructed object
     video_output_path = "dual_spin_fixed_bottle.mp4"
     # path to store the 3D object mesh
-    mesh_output_path = "./results/bottle.glb"
+    mesh_output_path = "./results/reconstruction_results/"
+    os.makedirs(mesh_output_path, exist_ok=True)
+
+    
     
     pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained('tencent/Hunyuan3D-2')
     mesh = pipeline(image=clean_path)[0]
@@ -57,7 +60,7 @@ if __name__ == "__main__":
     print("Is empty:", mesh.is_empty)
 
     # save the reconstructed mesh
-    mesh.export(mesh_output_path)
+    mesh.export(os.path.join(mesh_output_path,"bottle.glb"))
     print(f"mesh saved to: {mesh_output_path}")
     
     # Convert mesh
