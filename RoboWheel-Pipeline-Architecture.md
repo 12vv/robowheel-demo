@@ -287,3 +287,88 @@
 ---
 
 *文档日期：2026-04-02*
+
+---
+
+## 更新：FoundationPose 接入后的完整管线（2026-04-08）
+
+```
+互联网视频 (pick_bottle, 15s)
+    │
+    ├─ HaMeR + MediaPipe → MANO 参数 (151帧, 双手)
+    │    手指: 15×(3×3) 旋转矩阵 → Arti-MANO 22 关节
+    │    cam_t: [x_ndc*depth, y_ndc*depth, depth]
+    │
+    ├─ FoundationPose → 瓶子 6DoF (151帧)        ← NEW
+    │    输入: RGB + 瓶子 mesh + 第一帧 mask
+    │    输出: 4×4 位姿矩阵/帧
+    │    深度: ~0.52m（相机到瓶子距离）
+    │
+    ├─ 坐标校准                                     ← NEW
+    │    hand_cam = (cam_t[0:2] / cam_t[2]) × bottle_depth
+    │    hand_world = bottle_world + cam_to_world(hand_cam - bottle_cam) + lateral_offset
+    │
+    ├─ Arti-MANO 场景 (MuJoCo MjSpec)
+    │    双手 Arti-MANO: 22DOF × 2 + 6DoF base × 2 = 56 actuators
+    │    瓶子: freejoint + 碰撞 + 质量 + 摩擦
+    │
+    ├─ PPO 残差 RL (SB3, 200K steps, 16 envs)
+    │    动作: ±0.08rad 手指残差 (44维)
+    │    奖励: tracking + geo + smooth + contact + lift
+    │
+    └─ MuJoCo 渲染 → comparison.mp4/gif
+```
+
+---
+
+## 更新：V1.7 6-DOF 运动学回放 + D1 手部重定向（2026-04-14）
+
+### 里程碑
+
+V1.7 用**纯运动学回放**（无动力学）打通从视频 → Arti-MANO 22DOF 双手的完整重定向链路，作为 RL 之前的 baseline 保真度基准。
+
+### 主要改动
+
+1. **V1.6 → V1.7：3-slide base → 完整 6DOF 基座**
+   - 之前手腕朝向固定，只跟随 xyz 三轴平移；现在六自由度跟随 MANO wrist 位姿
+
+2. **D1 手指 mapping 重写**（`step_rl_v17_calibrated_6dof.py :mano_to_artimano`）
+   - 之前：15×MANO 旋转矩阵 → `.as_euler('xyz')` 取分量，拍脑袋指派到 22 关节
+   - 之后：按 Spider 各关节轴向做正确的 Euler 分解
+     - 4 指 MCP（2DOF）：`YZX` intrinsic → spread + curl
+     - PIP/DIP（1DOF Z）：单轴
+     - 拇指 CMC（3DOF X→Y→Z）：`XYZ` intrinsic
+   - 符号位 `SIGN_CURL=+1`（之前 `-1` 把 curl clip 成 0，手指永远不弯）
+   - `CURL_GAIN=1.7` / `THUMB_GAIN=1.4`：HaMeR 预测偏松（grip 时 ~95°/指，需 ~180° 才能包住 3cm 瓶），加增益补齐
+
+3. **连续 3-DOF 手腕朝向校准**（`calibrate_wrist_offset.py`）
+   - 之前：24 个轴对齐旋转格点搜索
+   - 之后：scipy Powell 连续优化，多起点扫
+   - **左右手独立校准**（HaMeR 左右手 pose 约定不对称）
+   - 约束：
+     - rest（f0）：palm_normal · (0,0,-1) ≈ 1
+     - grip 帧（f40/50/60/70 右，f50/60/70/90 左）：`hib_R @ R @ palm_normal ≈ -hib_t / |hib_t|`（掌心朝瓶）
+   - 输出 `output/R_MANO_TO_SPIDER.npz` 含 right/left
+
+4. **FoundationPose 轨迹覆盖**
+   - FPose 有两个失败模式：朝向从 f20 开始累积漂移（40°+），位置在 f80+ 冻结
+   - 覆盖策略：
+     - `body_R_world = I`（强制竖直）
+     - 握持前（f<grip_start）：固定在 f0 初始位置
+     - 握持后：`bottle_pos = palm_world - hib_t`（手在世界系经 `R_cw` 反投，掌心均值驱动瓶子）
+
+5. **片头帧 MANO 噪声过滤**
+   - 视频 f0~f39 是片头字幕卡，HaMeR 在黑屏上乱预测
+   - 检测到 `grip_start = first frame where both hands valid`，把 `hib_t`/`hib_R`/`rf`/`lf` 在 `[0..grip_start-1]` 全锁到 `grip_start` 帧
+
+### V1.7 效果（output/rl_v17_calibrated_6dof/v17_6dof.mp4）
+
+- ✅ Pre-grip 双手到达瓶侧 ready 姿态
+- ✅ Grip（f60）双手包住瓶身，手指明显弯曲
+- ✅ Lift 阶段瓶子始终竖直跟随双手掌心中点
+- ⚠️ Lift 幅度 ~8cm（真实 15-20cm）— HaMeR 单目深度精度瓶颈
+- ⚠️ 手指没完全贴合瓶面 — D1 范围内 2-DOF 轴分解的固有限制
+
+### 剩余 D2 选项（后续可上）
+
+换 dex-retargeting 或 MANO keypoint IK，用指尖位置做目标 IK 到 Spider 的 22 关节，吃掉 2-DOF 近似 + 单目深度两类误差。

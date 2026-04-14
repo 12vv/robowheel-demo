@@ -173,3 +173,33 @@ Arti-MANO 1:1 手指映射 + PPO ±0.08rad 残差
   ↓
 MuJoCo 物理仿真 → 渲染
 ```
+
+---
+
+## V1.7 更新（2026-04-14）
+
+### 纯运动学回放 baseline 打通
+
+V1.7 在 RL 之前先跑通**确定性运动学重定向链路**，验证 MANO→Spider 的几何保真度上限。
+
+### 关键改动
+
+| 模块 | V1.6 之前 | V1.7 |
+|------|----------|------|
+| 基座 | 3-slide（xyz 平移） | 6-DOF（xyz + rpy 全跟随 MANO wrist）|
+| 手指 mapping | `euler('xyz')` 分量拍脑袋 → 22 关节 | 按 Spider 各关节轴做正确 `YZX`/`XYZ` 分解 + curl gain 1.7×|
+| 手腕校准 | 24 个轴对齐格点搜索 | 3-DOF 连续 Powell 优化，左右手独立，多帧约束 |
+| 瓶子轨迹 | 直接用 FPose 输出 | 覆盖：强制竖直 + 握持后由双掌中心驱动 |
+| 片头噪声 | `valid` flag 信任 HaMeR | 自动检测 `grip_start`，前置帧全锁到该帧 |
+
+### 效果
+
+- v17_6dof.mp4：pre-grip reach / grip 握拳包瓶 / 竖直抬升全链路可播
+- Lift ~8cm（真实 15-20cm），瓶子始终竖直跟随双手
+- 剩余保真度缺口：HaMeR 单目深度精度 + 2-DOF Euler 分解近似
+
+### 下一步候选
+
+- D2 keypoint IK（dex-retargeting）吃掉 2-DOF 近似误差
+- 换 HaWoR/其它 MANO 估计器看 lift 幅度能否回到真值
+- 在此 baseline 上再接 PPO 残差 RL
