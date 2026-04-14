@@ -24,6 +24,11 @@ MANO_PATH     = os.path.join(BASE_DIR, 'output/pick_bottle_video/mano_results.js
 BOTTLE_VISUAL = os.path.abspath(os.path.join(BASE_DIR, 'output/bottle_recon/bottle_visual.obj'))
 CALIB_PATH    = os.path.join(BASE_DIR, 'output/calibrated_trajectory.npz')
 FPOSE_PATH    = os.path.join(BASE_DIR, 'output/bottle_6dof_poses.npz')
+MANO_KP_PATH  = os.path.join(BASE_DIR, 'output/mano_keypoints.npz')
+
+# Use D2 keypoint IK (smplx MANO FK + per-finger least_squares) if keypoints
+# are available; falls back to the D1 Euler-decomposition mapping otherwise.
+USE_IK = os.path.exists(MANO_KP_PATH)
 
 # Rotation: FoundationPose bottle frame (Y = long axis) -> sim frame (Z = up)
 R_FPOSE2SIM = Rot.from_euler('x', 90, degrees=True).as_matrix()
@@ -37,6 +42,25 @@ if os.path.exists(_R_M2S_PATH):
     R_M2S_LEFT  = _d['left']
 else:
     R_M2S_RIGHT = R_M2S_LEFT = Rot.from_euler('z', 90, degrees=True).as_matrix()
+
+
+def load_mano_fingers_ik():
+    """D2: solve finger joints via per-finger IK against MANO keypoints."""
+    from mano_keypoint_ik import solve_all_frames
+    kp = np.load(MANO_KP_PATH)
+    mano_r = kp['right']; mano_l = kp['left']
+    vR = kp['valid_right']; vL = kp['valid_left']
+    N = len(mano_r)
+    rh_mjcf = os.path.join(SPIDER_MANO, 'right.xml')
+    lh_mjcf = os.path.join(SPIDER_MANO, 'left.xml')
+    # R_M2S is loaded at module level below
+    # MANO canonical template frame == Spider palm body frame (rest-pose joint
+    # positions match within 1mm). So identity transform is correct here; R_M2S
+    # is only for wrist ORIENTATION in world.
+    I = np.eye(3)
+    rf = solve_all_frames(mano_r, I, rh_mjcf, 'right', vR)
+    lf = solve_all_frames(mano_l, I, lh_mjcf, 'left',  vL)
+    return N, rf, lf
 
 
 def load_mano_fingers():
@@ -165,7 +189,12 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     print("=== V1.7 Calibrated + 6-DOF Mocap Base ===")
 
-    N_mano, rf, lf = load_mano_fingers()
+    if USE_IK:
+        print("  [finger mapping] D2: keypoint IK")
+        N_mano, rf, lf = load_mano_fingers_ik()
+    else:
+        print("  [finger mapping] D1: Euler decomposition")
+        N_mano, rf, lf = load_mano_fingers()
     calib = np.load(CALIB_PATH)
     hib_t = calib['hand_in_bottle_t'].copy()   # (N,2,3)
     hib_R = calib['hand_in_bottle_R'].copy()   # (N,2,3,3)

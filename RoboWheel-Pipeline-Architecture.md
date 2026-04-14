@@ -372,3 +372,38 @@ V1.7 用**纯运动学回放**（无动力学）打通从视频 → Arti-MANO 22
 ### 剩余 D2 选项（后续可上）
 
 换 dex-retargeting 或 MANO keypoint IK，用指尖位置做目标 IK 到 Spider 的 22 关节，吃掉 2-DOF 近似 + 单目深度两类误差。
+
+---
+
+## 更新：D2 MANO Keypoint IK（2026-04-14 晚）
+
+### 动机
+
+D1（axis-aligned Euler 分解）对 MANO 每指只用了 2-DOF（spread + curl）且丢弃 twist，视频中握姿还原度不够，加 `CURL_GAIN=1.7` 后仍是"所有指同增益"的粗糙补丁。
+
+### 实现
+
+1. **离线 MANO FK**（`compute_mano_keypoints.py`）
+   - smplx MANO layer + HaMeR 输出的 hand_pose 旋转矩阵
+   - 每手 21 个关键点：16 个 FK 关节 + 5 个指尖顶点（MANO template vertex 744/320/443/554/671）
+   - 输出 `output/mano_keypoints.npz`（151 帧 × 2 手）
+
+2. **Spider 单指 IK**（`mano_keypoint_ik.py`）
+   - MuJoCo `mj_kinematics` 做 per-finger FK（palm 为根，xpos 即 palm-local 坐标）
+   - scipy `least_squares`（TRF+bounds），12 残差（3 关节 + 1 指尖，每点 3D）+ 小正则
+   - `diff_step=0.02`, `init_q=0.2`（避开 x=0 时数值 Jacobian 退化）
+
+3. **替换 `mano_to_artimano`**
+   - `USE_IK` 自动根据 keypoints.npz 是否存在切换 D1/D2
+   - 关键：IK 的 R_MANO_TO_SPIDER = **identity**（MANO canonical frame 和 Spider palm body frame 的 rest-pose 关节位置 <1mm 重合，无需 basis 变换；orientation 的 R_M2S 只用于世界系 wrist，不碰 keypoint）
+
+### 效果
+
+- IK 残差：f40/60/100 右手总 1.6-3.4cm，每指 0.5-2.7cm
+- 握姿自然度显著提升：f60 右手 `[spread=-10°, MCP=22°, PIP=42°, DIP=21°]`，符合真实握瓶动作（PIP 大于 MCP）
+- D1 `CURL_GAIN`/`THUMB_GAIN` hack 不再需要（但保留作 fallback）
+
+### 遗留
+
+- Lift 仍 8cm（HaMeR 单目深度瓶颈，与 mapping 无关）
+- IK 残差 ~1-3cm 来自 Spider 与 MANO template 骨长/偏置差，不是 convergence 问题
